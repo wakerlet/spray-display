@@ -77,6 +77,26 @@
   }
   .tab.active{background:var(--accent);color:var(--near-black);}
 
+  .seg-toggle{
+    display:flex;
+    background:var(--near-black);
+    border-radius:12px;
+    padding:3px;
+    border:1px solid #423C33;
+  }
+  .seg-btn{
+    flex:1;
+    text-align:center;
+    padding:9px 6px;
+    font-size:13px;
+    font-weight:600;
+    color:var(--ink-dim);
+    border-radius:9px;
+    cursor:pointer;
+    user-select:none;
+  }
+  .seg-btn.active{background:var(--accent);color:var(--near-black);}
+
   .view{display:none; flex:1; overflow-y:auto; padding:0 18px 24px;}
   .view.active{display:flex; flex-direction:column;}
 
@@ -338,14 +358,28 @@
           <input type="number" id="sprayerGpm" inputmode="decimal" placeholder="e.g. 8.5">
         </div>
       </div>
-      <div class="calc-note">Total GPM = both sides combined, measured with the sprayer running in place. This app assumes one pass sprays both sides of the row (standard for airblast blueberry spraying).</div>
+      <div class="calc-note">Total GPM = both sides combined, measured with the sprayer running in place.</div>
+      <div class="field" style="margin-top:12px;">
+        <label>Row coverage per pass</label>
+        <div class="seg-toggle" id="rowModeToggle">
+          <div class="seg-btn active" data-mode="double">Double row (both sides/pass)</div>
+          <div class="seg-btn" data-mode="single">Single row (one side/pass)</div>
+        </div>
+      </div>
+      <div class="calc-note">Double row: sprayer hits both sides of the row (or both adjacent rows) in one pass — the standard airblast blueberry setup. Single row: only one side gets sprayed per pass (e.g. wide rows needing two trips), which roughly doubles the water needed per acre at the same speed.</div>
     </div>
 
     <div class="setup-card">
       <h2>This Tank's Mix</h2>
+      <div class="field">
+        <label for="productSelect">Product</label>
+        <select id="productSelect">
+          <option value="">Custom — enter manually below</option>
+        </select>
+      </div>
       <div class="field-row">
         <div class="field">
-          <label for="productName">Product (optional)</label>
+          <label for="productName">Product name</label>
           <input type="text" id="productName" placeholder="e.g. Captan">
         </div>
       </div>
@@ -366,6 +400,7 @@
           </select>
         </div>
       </div>
+      <div class="calc-note" id="reiNote"></div>
       <div class="field">
         <label for="waterInTank">Water in tank, this fill (gal)</label>
         <input type="number" id="waterInTank" inputmode="decimal" placeholder="e.g. 100">
@@ -381,7 +416,7 @@
     <div class="save-msg" id="saveMsg"></div>
 
     <div class="calc-note" style="margin-top:8px;">
-      Formula: Actual GPA = (Total GPM × 495) ÷ (Speed × Row spacing). The 495 constant applies when spraying both sides of the row in one pass, per standard airblast calibration guides (e.g. Ohio State &amp; UGA Extension). Target GPA is back-calculated from your label rate and your actual tank mix, so the Drive screen's status colors always track the label rate directly. Always confirm calibration with a static catch-test before relying on this for chemical application — GPS speed and sprayer output readings can drift.
+      Formula: Actual GPA = (Total GPM × constant) ÷ (Speed × Row spacing). Constant is 495 for double row (both sides sprayed in one pass) or 990 for single row (one side per pass), per standard airblast calibration guides (e.g. Ohio State &amp; UGA Extension). Target GPA is back-calculated from your label rate and your actual tank mix, so the Drive screen's status colors always track the label rate directly. Always confirm calibration with a static catch-test before relying on this for chemical application — GPS speed and sprayer output readings can drift.
     </div>
   </div>
 
@@ -389,6 +424,51 @@
 (function(){
   const KEY = 'wef_sprayer_settings_v1';
   const $ = id => document.getElementById(id);
+
+  const PRODUCTS = [
+    { name: 'OxiDate 5.0',                       rate: 30,   unit: 'fl oz', rei: null },
+    { name: 'Propicon',                          rate: 6,    unit: 'fl oz', rei: null },
+    { name: 'Regalia',                           rate: 96,   unit: 'fl oz', rei: null },
+    { name: 'Magna-Bon 005',                     rate: 50,   unit: 'fl oz', rei: null },
+    { name: 'Quash',                              rate: 3,    unit: 'oz',    rei: null },
+    { name: 'Grandevo WDG',                      rate: 3,    unit: 'oz',    rei: 4 },
+    { name: 'Confirm 2F',                        rate: 16,   unit: 'fl oz', rei: null },
+    { name: 'Inspirato 2F Insecticide',          rate: 4,    unit: 'fl oz', rei: null },
+    { name: 'Asana',                             rate: 8,    unit: 'fl oz', rei: 12 },
+    { name: 'Assail (Aster 30SG, Anarchy)',      rate: 6,    unit: 'oz',    rei: 12 },
+    { name: 'Indar',                             rate: 6,    unit: 'fl oz', rei: null },
+    { name: 'Imidan',                            rate: 1.33, unit: 'oz',    rei: 24 },
+    { name: 'Mustang Maxx',                      rate: 4,    unit: 'fl oz', rei: 12 },
+    { name: 'Malathion 5EC',                     rate: 32,   unit: 'fl oz', rei: 12 },
+    { name: 'Movento 2SC',                       rate: 10,   unit: 'fl oz', rei: null },
+    { name: 'Fanfare EC (Brigade 2EC)',          rate: 6.4,  unit: 'fl oz', rei: 12 },
+    { name: 'Delegate',                          rate: 3,    unit: 'oz',    rei: 4 }
+  ];
+
+  const productSelect = $('productSelect');
+  PRODUCTS.forEach((p, i) => {
+    const opt = document.createElement('option');
+    opt.value = String(i);
+    opt.textContent = p.name;
+    productSelect.appendChild(opt);
+  });
+
+  function updateReiNote(){
+    const idx = productSelect.value;
+    if(idx === ''){ $('reiNote').textContent = ''; return; }
+    const p = PRODUCTS[parseInt(idx,10)];
+    $('reiNote').textContent = p.rei ? `REI: ${p.rei} hours` : 'REI not on file — check the label.';
+  }
+
+  productSelect.addEventListener('change', () => {
+    const idx = productSelect.value;
+    if(idx === '') { updateReiNote(); return; }
+    const p = PRODUCTS[parseInt(idx,10)];
+    $('productName').value = p.name;
+    $('targetRate').value = p.rate;
+    $('productUnit').value = p.unit;
+    updateReiNote();
+  });
 
   function loadSettings(){
     try{
@@ -402,8 +482,13 @@
 
   let settings = loadSettings() || {
     rowSpacing: null, sprayerGpm: null, targetRate: null,
-    productName: '', productAdded: null, productUnit: 'fl oz', waterInTank: null
+    productName: '', productAdded: null, productUnit: 'fl oz', waterInTank: null,
+    sprayMode: 'double'
   };
+
+  function getGpaConstant(){
+    return settings.sprayMode === 'single' ? 990 : 495;
+  }
 
   function populateSetupForm(){
     $('rowSpacing').value = settings.rowSpacing ?? '';
@@ -413,8 +498,24 @@
     $('productAdded').value = settings.productAdded ?? '';
     $('productUnit').value = settings.productUnit ?? 'fl oz';
     $('waterInTank').value = settings.waterInTank ?? '';
+    const matchIdx = PRODUCTS.findIndex(p => p.name === settings.productName);
+    productSelect.value = matchIdx >= 0 ? String(matchIdx) : '';
+    updateReiNote();
+    document.querySelectorAll('#rowModeToggle .seg-btn').forEach(t=>{
+      t.classList.toggle('active', t.dataset.mode === (settings.sprayMode || 'double'));
+    });
   }
   populateSetupForm();
+
+  document.querySelectorAll('#rowModeToggle .seg-btn').forEach(tab=>{
+    tab.addEventListener('click', ()=>{
+      document.querySelectorAll('#rowModeToggle .seg-btn').forEach(t=>t.classList.remove('active'));
+      tab.classList.add('active');
+      settings.sprayMode = tab.dataset.mode;
+      saveSettings(settings);
+      updateStaticDisplays();
+    });
+  });
 
   // ---- Tabs ----
   document.querySelectorAll('.tab').forEach(tab=>{
@@ -435,7 +536,8 @@
       productName: $('productName').value.trim(),
       productAdded: parseFloat($('productAdded').value) || null,
       productUnit: $('productUnit').value,
-      waterInTank: parseFloat($('waterInTank').value) || null
+      waterInTank: parseFloat($('waterInTank').value) || null,
+      sprayMode: document.querySelector('#rowModeToggle .seg-btn.active')?.dataset.mode || 'double'
     };
     saveSettings(settings);
     $('saveMsg').textContent = 'Saved.';
@@ -575,7 +677,7 @@
     const derived = getDerived();
 
     if(derived && sprayerGpm && rowSpacing){
-      const targetMph = (sprayerGpm * 495) / (derived.targetGpa * rowSpacing);
+      const targetMph = (sprayerGpm * getGpaConstant()) / (derived.targetGpa * rowSpacing);
       const lowMph = targetMph * 0.95;
       const highMph = targetMph * 1.05;
       $('speedRange').textContent = `${lowMph.toFixed(1)} – ${highMph.toFixed(1)} mph`;
@@ -608,7 +710,7 @@
     const derived = getDerived();
 
     if(currentSpeedMph !== null && currentSpeedMph > 0.15 && rowSpacing && sprayerGpm){
-      gpa = (sprayerGpm * 495) / (currentSpeedMph * rowSpacing);
+      gpa = (sprayerGpm * getGpaConstant()) / (currentSpeedMph * rowSpacing);
     }
 
     if(gpa !== null && derived){
